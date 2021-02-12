@@ -27,6 +27,17 @@
  */
 #include <SoftwareSerial.h>
 
+const byte numChars = 32;
+char receivedChars[numChars];
+boolean newData = false;
+String cmdcache = "";
+
+const char myaddr = 'a';
+const char waitflag = 'w'; //stop output activity
+const char rateflag = 'r'; //change rate
+const char patternflag = 'p'; //spin up new pattern
+const char stochflag = 's'; //how much randomness to add to routine
+
 SoftwareSerial mySerial(2, 3); // RX, TX
 
 void setup()
@@ -41,6 +52,74 @@ void setup()
 
 void loop() // run over and over
 {
-  if (mySerial.available())
-    Serial.write(mySerial.read());
+  recvWithStartEndMarkers();
+  if (newData == true) {
+      newData = false;
+      String temp(receivedChars);
+      applySerialCommand(temp);
+  }
 }
+
+void recvWithStartEndMarkers() {
+    static boolean recvInProgress = false;
+    static byte ndx = 0;
+    char startMarker = '<';
+    char endMarker = '>';
+    char rc;
+ 
+    while (mySerial.available() > 0 && newData == false) {
+        rc = mySerial.read();
+        Serial.write(rc); //forward regardless
+
+        if (recvInProgress == true) {
+            if (rc != endMarker) {
+                receivedChars[ndx] = rc;
+                ndx++;
+                if (ndx >= numChars) {
+                    ndx = numChars - 1;
+                }
+            }
+            else {
+                receivedChars[ndx] = '\0';
+                recvInProgress = false;
+                ndx = 0;
+                newData = true;
+            }
+        }
+
+        else if (rc == startMarker) {
+            recvInProgress = true;
+        }
+    }
+}
+
+void applySerialCommand(String serialcommand){
+  if(receivedChars[0] != myaddr){
+    return;
+  }
+  if(_mode == rfidflag){
+        //cache a command that came in during button interaction
+        cmdcache = serialcommand;
+        return;
+      }
+      else if(receivedChars[2] == rgbflag){
+        _mode = rgbflag;
+        _modecache = rgbflag;
+        _shouldFlash = true;
+        char* rgbvals = strtok(receivedChars, ".");
+        byte i = 0;
+        //packet looks like this: <c.125.125.125>
+        while (rgbvals != 0){
+            int color = atoi(rgbvals);
+            if(color > 0){
+                cueColor[i] = color;
+                i++;                
+            }
+          rgbvals = strtok(0, ".");
+        }
+      }
+      else if(receivedChars[2] == waitflag){
+        _mode = waitflag;
+      }
+}
+

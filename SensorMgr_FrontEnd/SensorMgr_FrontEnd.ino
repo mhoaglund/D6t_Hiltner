@@ -40,14 +40,7 @@
 #define NUMPIXELS 64
 
 Adafruit_NeoPixel pixels(NUMPIXELS, NPXPIN, NEO_GRB + NEO_KHZ800);
-//Mux control pins
-const int s0 = 0;
-const int s1 = 1;
-const int s2 = 2;
-const int s3 = 3;
 
-//Mux in "SIG" pin
-const int SIG_pin = A0;
 const int FE_pin = 6;
 const int POT_pin = A1;
 
@@ -108,20 +101,10 @@ int16_t conv8us_s16_le(uint8_t* buf, int n) {
  * 2. initialize an I2C peripheral.
  */
 void setup() {
-   pinMode(s0, OUTPUT); 
-  pinMode(s1, OUTPUT); 
-  pinMode(s2, OUTPUT); 
-  pinMode(s3, OUTPUT); 
+
   pinMode(FE_pin, INPUT);
-
-  digitalWrite(s0, LOW);
-  digitalWrite(s1, LOW);
-  digitalWrite(s2, LOW);
-  digitalWrite(s3, LOW);
-
-    pinMode(SIG_pin, INPUT);
-    Serial.begin(115200);  // Serial baudrate = 115200bps
-    Serial1.begin(115200); // Serial bus for the 2 arduinos. D13, D14
+    Serial.begin(9600);  // Serial baudrate = 115200bps
+    Serial1.begin(9600); // Serial bus for the 2 arduinos. D13, D14
     Wire.begin();  // i2c master
     pixels.begin();
 }
@@ -139,7 +122,6 @@ void loop() {
 //      frontEndActive = false;
 //    }
     if(frontEndActive){
-      //readSwitches();
       //int sens = analogRead(POT_pin);
       //TODO set sensitivity from pot
     }
@@ -184,13 +166,12 @@ void loop() {
     updateAverage();
     setPixelDisplay();
     delay(25);
+    //TODO instruct co-controllers
 }
 
 //Intake method: a pixel has just arrived. 
 void registerPixel(int16_t px, int pos){
   current_readings[pos] = px;
-//  Set Neopixel for this one
-//  Whatever else
 }
 
 //Called at the end of a frame. Recompute average of field.
@@ -223,48 +204,23 @@ int _arrAvg(int _avgarr[], int _arrsize){
   return total/_arrsize;
 }
 
-//Read the 16 pixel settings
-void readSwitches(){
-  for(int i = 0; i < 16; i ++){
-//    Serial.print("Value at channel ");
-//    Serial.print(i);
-//    Serial.print("is : ");
-//    Serial.println(readMux(i));
-    current_switch_settings[i] = readMux(i);
-  }
+// ex. <a:r:100> to tell addr a to set rate to 100
+void instructCoController(char command, int addr, int payload){
+    Serial1.print('<');
+    Serial1.print(addr);
+    Serial1.print(':');
+    Serial1.print(command);
+    Serial1.print(payload);
+    Serial1.print('>');
 }
 
-int readMux(int channel){
-  int controlPin[] = {s0, s1, s2, s3};
-
-  int muxChannel[16][4]={
-    {0,0,0,0}, //channel 0
-    {1,0,0,0}, //channel 1
-    {0,1,0,0}, //channel 2
-    {1,1,0,0}, //channel 3
-    {0,0,1,0}, //channel 4
-    {1,0,1,0}, //channel 5
-    {0,1,1,0}, //channel 6
-    {1,1,1,0}, //channel 7
-    {0,0,0,1}, //channel 8
-    {1,0,0,1}, //channel 9
-    {0,1,0,1}, //channel 10
-    {1,1,0,1}, //channel 11
-    {0,0,1,1}, //channel 12
-    {1,0,1,1}, //channel 13
-    {0,1,1,1}, //channel 14
-    {1,1,1,1}  //channel 15
-  };
-
-  //loop through the 4 sig
-  for(int i = 0; i < 4; i ++){
-    digitalWrite(controlPin[i], muxChannel[channel][i]);
-  }
-
-  //read the value at the SIG pin
-  int val = analogRead(SIG_pin);
-
-  //return the value
-  return val;
+void instructCoController(char command, int addr, String payload){
+    Serial1.print('<');
+    Serial1.print(addr);
+    Serial1.print(':');
+    Serial1.print(command);
+    Serial1.print(payload);
+    Serial1.print('>');
 }
+
 // vi: ft=arduino:fdm=marker:et:sw=4:tw=80
