@@ -1,4 +1,6 @@
+#include <Favg.h>
 #include <Adafruit_NeoPixel.h>
+
 
 /*
  * MIT License
@@ -41,19 +43,21 @@
 
 Adafruit_NeoPixel pixels(NUMPIXELS, NPXPIN, NEO_GRB + NEO_KHZ800);
 
+Favg tracker(10,16,1,true);
+
 const int FE_pin = 6;
 const int POT_pin = A1;
+const int SW_PIN = 5;
+const int SENS_POT = A6;
+const int DECAY_POT = A5;
 
 uint8_t rbuf[N_READ];
 
 const int deviation = 5;
-int fieldAvg = 0;
 bool frontEndActive = true; //false for actual operation
 int current_readings[16];
 int npx_readout_channels[] = {2,3,4,5,10,11,12,13,18,19,20,21,26,27,28,29};
 int current_switch_settings[16];
-
-
 
 uint8_t calc_crc(uint8_t data) {
     int index;
@@ -107,6 +111,7 @@ void setup() {
     Serial1.begin(9600); // Serial bus for the 2 arduinos. D13, D14
     Wire.begin();  // i2c master
     pixels.begin();
+    pixels.setBrightness(50); // Set BRIGHTNESS to about 1/5 (max = 255)
 }
 
 
@@ -148,61 +153,43 @@ void loop() {
 
     // 1st data is PTAT measurement (: Proportional To Absolute Temperature)
     int16_t itemp = conv8us_s16_le(rbuf, 0);
-    Serial.print("PTAT:");
-    Serial.println(itemp / 10.0, 1);
+    //Serial.print("PTAT:");
+    //Serial.println(itemp / 10.0, 1);
 
     // loop temperature pixels of each thrmopiles measurements
     for (i = 0, j = 2; i < N_PIXEL; i++, j += 2) {
         itemp = conv8us_s16_le(rbuf, j);
         registerPixel(itemp, i);
-        Serial.print(itemp / 10.0, 1);  // print PTAT & Temperature
-        //TODO: register pixel
-        if ((i % N_ROW) == N_ROW - 1) {
-            Serial.println(" [degC]");  // wrap text at ROW end.
-        } else {
-            Serial.print(",");   // print delimiter
-        }
     }
-    updateAverage();
-    setPixelDisplay();
-    delay(25);
+    tracker.increment(current_readings);
+    //interpret();
+    setOutput();
+    delay(50);
     //TODO instruct co-controllers
 }
 
-//Intake method: a pixel has just arrived. 
 void registerPixel(int16_t px, int pos){
-  current_readings[pos] = px;
+  current_readings[pos] = int(px);
 }
 
-//Called at the end of a frame. Recompute average of field.
-void updateAverage(){
-  fieldAvg = _arrAvg(current_readings, 16);
-  Serial.print("AVG:   ");
-  Serial.println(fieldAvg, DEC);
-}
-
-//Set all display pixels for the sensor readout.
-void setPixelDisplay(){
+void setOutput(){
   for (byte i = 0; i < N_PIXEL; i++) {
-      int16_t this_reading = current_readings[i];
-        //setPixel(this_reading, i);
-        int avgdiff = this_reading - fieldAvg;
-        if(avgdiff > deviation && this_reading > fieldAvg){
-          pixels.setPixelColor(npx_readout_channels[i], pixels.Color(0, 75, 75));
-        } else {
-          pixels.setPixelColor(npx_readout_channels[i], pixels.Color(150, 0, 0));     
+      int16_t latest_reading = current_readings[i];
+      int16_t this_reading = tracker.frameAverage[i];
+        int avgdiff = latest_reading - this_reading;
+        Serial.print(" ");
+        Serial.print(avgdiff, DEC);
+        if(frontEndActive){
+            if(avgdiff > 150) avgdiff = 150;
+            if(avgdiff < 0) avgdiff = 0;
+            pixels.setPixelColor(npx_readout_channels[i], pixels.Color(150 - (avgdiff * 2), 0, avgdiff));
         }
     }
-    pixels.show();
+    Serial.println(" ");
+    if(frontEndActive){
+      pixels.show();
+    }
   }
-
-int _arrAvg(int _avgarr[], int _arrsize){
-  int total = 0;
-  for (int ind = 0; ind < _arrsize; ind++) {
-    total += _avgarr[ind];
-  }
-  return total/_arrsize;
-}
 
 // ex. <a:r:100> to tell addr a to set rate to 100
 void instructCoController(char command, int addr, int payload){
