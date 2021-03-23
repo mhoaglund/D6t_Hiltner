@@ -1,62 +1,110 @@
-/*
-  Software serial multple serial test
-
- Receives from the hardware serial, sends to software serial.
- Receives from software serial, sends to hardware serial.
-
- The circuit:
- * RX is digital pin 2 (connect to TX of other device)
- * TX is digital pin 3 (connect to RX of other device)
-
- Note:
- Not all pins on the Mega and Mega 2560 support change interrupts,
- so only the following can be used for RX:
- 10, 11, 12, 13, 50, 51, 52, 53, 62, 63, 64, 65, 66, 67, 68, 69
-
- Not all pins on the Leonardo support change interrupts,
- so only the following can be used for RX:
- 8, 9, 10, 11, 14 (MISO), 15 (SCK), 16 (MOSI).
-
- created back in the mists of time
- modified 25 May 2012
- by Tom Igoe
- based on Mikal Hart's example
-
- This example code is in the public domain.
-
- */
+//Installed on the middle uno in the chain, it listens, complies, and forwards.
 #include <SoftwareSerial.h>
+int interval = 125;
+int alt_interval = 500;
+long previousMillis = 0;
+long previousMillisAlt = 0;
+boolean newData = false;
+boolean shouldRun = false;
+String cmdcache = "";
+byte VERSION = 1;
+
+int DEVICES[] = {8, 9, 10, 11};
+boolean DIR = true;
+int DEVICE_COUNT = 4;
+const byte MAX_TICKS = 25; //number of ticks in a measure of time
+byte TICKS = 1;
+const byte STATECHANGES[] = {1,7,14,19}; //device changeover points
+
+//At times, pump timing will be varied by small random amounts. Pauses will also be inserted.
+byte STATECHANGE_AUX_STARTS[] = {0,0,0,0};
+byte STATECHANGE_AUX_PAUSES[] = {0,0,0,0};
+byte STATECHANGE_AUX_RAND_PAUSES[] = {0,0,0,0};
+
+byte stochasticity = 4;
 
 const byte numChars = 32;
 char receivedChars[numChars];
-boolean newData = false;
-String cmdcache = "";
-
-const char myaddr = 'a';
-const char waitflag = 'w'; //stop output activity
-const char rateflag = 'r'; //change rate
-const char patternflag = 'p'; //spin up new pattern
-const char stochflag = 's'; //how much randomness to add to routine
+const char adjustrate_flag = 'r';
+const char adjuststoch_flag = 'x';
+const char stop_flag = 's';
+const char start_flag = 'b';
+const char myname = 'a';
 
 SoftwareSerial mySerial(2, 3); // RX, TX
 
 void setup()
 {
-  // Open serial communications and wait for port to open:
   Serial.begin(9600);
-  Serial.println("Goodnight moon two!!");
+  Serial.println("lets get started");
+ 
+  for (int i = 0; i < DEVICE_COUNT; i = i + 1) {    
+     pinMode(DEVICES[i], OUTPUT);
+     digitalWrite(DEVICES[i], HIGH);
+   }
 
-  // set the data rate for the SoftwareSerial port
+  Serial.begin(9600);
+  randomSeed(analogRead(0));
   mySerial.begin(9600);
 }
 
-void loop() // run over and over
+void loop()
 {
+  unsigned long currentMillis = millis();
   recvWithStartEndMarkers();
   if (newData == true) {
       newData = false;
       String temp(receivedChars);
       applySerialCommand(temp);
+  }
+  if(currentMillis - previousMillis > interval) {
+    previousMillis = currentMillis; 
+    if(shouldRun){
+      Iterate();
+    }
+  }
+  if(currentMillis - previousMillisAlt > alt_interval) {
+    previousMillisAlt = currentMillis; 
+    if(shouldRun){
+      DecorateCycle();  
+    }
+  }
+}
+
+void Iterate(){
+  if(TICKS >= MAX_TICKS){
+    //TODO stochastic redecorate? or will that always be on another loop?
+    TICKS = 1;
+  }
+  for(byte i = 0; i < DEVICE_COUNT; i++){
+    if(DIR){
+      if(TICKS < STATECHANGE_AUX_STARTS[i] | TICKS == STATECHANGE_AUX_PAUSES[i]){
+        digitalWrite(DEVICES[i], HIGH);
+      }
+      else digitalWrite(DEVICES[i], LOW);
+    }
+    else{
+      if(TICKS > STATECHANGES[i]){
+        digitalWrite(DEVICES[i], LOW);
+      }
+      else digitalWrite(DEVICES[i], HIGH);
+    }
+  }
+  TICKS++;
+}
+
+void DecorateCycle(){
+  Serial.println("Decorating...");
+  for(byte i = 0; i < DEVICE_COUNT; i++){
+     int base = STATECHANGES[i];
+     byte _newpause = random(base, base+stochasticity);
+     byte _randpause = random(1, MAX_TICKS);
+     byte _newstart = random(base-stochasticity, base);
+     if(_newstart < 1) _newstart = 1;
+     if(_newpause > MAX_TICKS) _newpause = MAX_TICKS;
+     STATECHANGE_AUX_STARTS[i] = _newstart;
+     STATECHANGE_AUX_PAUSES[i] = _newpause;
+     STATECHANGE_AUX_RAND_PAUSES[i] = _randpause;
   }
 }
 
@@ -67,9 +115,8 @@ void recvWithStartEndMarkers() {
     char endMarker = '>';
     char rc;
  
-    while (mySerial.available() > 0 && newData == false) {
-        rc = mySerial.read();
-        Serial.write(rc); //forward regardless
+    while (Serial.available() > 0 && newData == false) {
+        rc = Serial.read();
 
         if (recvInProgress == true) {
             if (rc != endMarker) {
@@ -93,33 +140,55 @@ void recvWithStartEndMarkers() {
     }
 }
 
+//Serial command ex. <ar50>
 void applySerialCommand(String serialcommand){
-  if(receivedChars[0] != myaddr){
-    return;
-  }
-  if(_mode == rfidflag){
-        //cache a command that came in during button interaction
-        cmdcache = serialcommand;
+      mySerial.print(serialcommand); //forward it
+      if(serialcommand[0] != myname){
         return;
+      } else {
+        serialcommand.remove(0,1);
       }
-      else if(receivedChars[2] == rgbflag){
-        _mode = rgbflag;
-        _modecache = rgbflag;
-        _shouldFlash = true;
-        char* rgbvals = strtok(receivedChars, ".");
-        byte i = 0;
-        //packet looks like this: <c.125.125.125>
-        while (rgbvals != 0){
-            int color = atoi(rgbvals);
-            if(color > 0){
-                cueColor[i] = color;
-                i++;                
-            }
-          rgbvals = strtok(0, ".");
+      if(serialcommand[0] == adjustrate_flag){
+        //TODO adjust rate of cycling
+        serialcommand.remove(0,1);
+        int newrate = serialcommand.toInt();
+        if(newrate < 50) newrate = 50; //avoid burning out the relays
+        Serial.println(newrate, DEC);
+        if(newrate == 0 && shouldRun){
+          Stop();
         }
+        else if(!shouldRun && newrate > 0){
+          Start();
+        }
+        interval = newrate;
       }
-      else if(receivedChars[2] == waitflag){
-        _mode = waitflag;
+      else if(serialcommand[0] == adjuststoch_flag){
+        serialcommand.remove(0,1);
+        int stoch = serialcommand.toInt();
+        Serial.println(stoch, DEC);
+        alt_interval = stoch;
+      }
+      else if(serialcommand[0] == stop_flag){
+        Stop();
+      }
+      else if(serialcommand[0] == start_flag){
+        Start();
       }
 }
 
+void Stop(){
+  Serial.println("Stopping");
+   if(shouldRun){
+    shouldRun = false;
+   }
+   for (int i = 0; i < DEVICE_COUNT; i = i + 1) {    
+     digitalWrite(DEVICES[i], HIGH);
+   }
+}
+
+void Start(){
+  Serial.println("Starting");
+   if(!shouldRun){
+    shouldRun = true;
+   }
+}

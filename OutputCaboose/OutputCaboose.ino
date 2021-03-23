@@ -1,5 +1,5 @@
 //Installed on the last uno in the chain, it just listens and complies.
-
+//#include <SoftwareSerial.h>
 int interval = 125;
 int alt_interval = 500;
 long previousMillis = 0;
@@ -29,7 +29,9 @@ const char adjustrate_flag = 'r';
 const char adjuststoch_flag = 'x';
 const char stop_flag = 's';
 const char start_flag = 'b';
-const char myname = 'a';
+const char myname = 'b';
+
+//SoftwareSerial mySerial(2, 3); // RX, TX
 
 void setup()
 {
@@ -43,7 +45,7 @@ void setup()
 
   Serial.begin(9600);
   randomSeed(analogRead(0));
-  Serial.println("starting...");
+  //mySerial.begin(9600);
 }
 
 void loop()
