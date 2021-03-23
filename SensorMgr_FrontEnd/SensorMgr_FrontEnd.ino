@@ -45,9 +45,8 @@ Adafruit_NeoPixel pixels(NUMPIXELS, NPXPIN, NEO_GRB + NEO_KHZ800);
 
 Favg tracker(10,16,1,true);
 
-const int FE_pin = 6;
+const int FE_pin = 4;
 const int POT_pin = A1;
-const int SW_PIN = 5;
 const int SENS_POT = A6;
 const int DECAY_POT = A5;
 
@@ -107,6 +106,8 @@ int16_t conv8us_s16_le(uint8_t* buf, int n) {
 void setup() {
 
   pinMode(FE_pin, INPUT);
+  pinMode(SENS_POT, INPUT);
+  pinMode(DECAY_POT, INPUT);
     Serial.begin(9600);  // Serial baudrate = 115200bps
     Serial1.begin(9600); // Serial bus for the 2 arduinos. D13, D14
     Wire.begin();  // i2c master
@@ -120,16 +121,23 @@ void setup() {
  * 2. output results, format is: [degC]
  */
 void loop() {
-    int reading = digitalRead(FE_pin);
-//    if(reading == HIGH){
-//      frontEndActive = true;
-//    } else {
-//      frontEndActive = false;
-//    }
-    if(frontEndActive){
-      //int sens = analogRead(POT_pin);
-      //TODO set sensitivity from pot
+    int fe_state = digitalRead(FE_pin);
+    if(fe_state == HIGH){
+      frontEndActive = true;
+    } else {
+      frontEndActive = false;
+      //TODO black out the npx on switchoff
+      Serial.println("Front End Off");
     }
+
+    int sens_state = analogRead(SENS_POT);
+    int decay_state = analogRead(DECAY_POT);
+    //TODO set adjustments, pots are working
+    Serial.print("SNS: ");
+    Serial.print(sens_state, DEC);
+    Serial.print(" :: DECAY: ");
+    Serial.println(decay_state, DEC);
+    
   
     int i, j;
 
@@ -150,13 +158,8 @@ void loop() {
     if (D6T_checkPEC(rbuf, N_READ - 1)) {
         return;
     }
-
-    // 1st data is PTAT measurement (: Proportional To Absolute Temperature)
     int16_t itemp = conv8us_s16_le(rbuf, 0);
-    //Serial.print("PTAT:");
-    //Serial.println(itemp / 10.0, 1);
-
-    // loop temperature pixels of each thrmopiles measurements
+    // loop temperature pixels of each thermopiles measurements
     for (i = 0, j = 2; i < N_PIXEL; i++, j += 2) {
         itemp = conv8us_s16_le(rbuf, j);
         registerPixel(itemp, i);
@@ -201,7 +204,7 @@ void instructCoController(char command, int addr, int payload){
     Serial1.print('>');
 }
 
-void instructCoController(char command, int addr, String payload){
+void instructCoControllerStr(char command, int addr, String payload){
     Serial1.print('<');
     Serial1.print(addr);
     Serial1.print(':');
