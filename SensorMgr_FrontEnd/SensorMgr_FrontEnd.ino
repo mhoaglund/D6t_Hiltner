@@ -48,15 +48,36 @@ Favg tracker(10,16,1,true);
 const int FE_pin = 4;
 const int POT_pin = A1;
 const int SENS_POT = A6;
-const int DECAY_POT = A5;
+const int RATE_POT = A5;
+
+const char adjustrate_flag = 'r';
+const char adjustdensity_flag = 'x';
+const char stop_flag = 's';
+const char start_flag = 'b';
+const char myname = 'c';
+
+int interval = 50;
+int alt_interval = 250;
+long previousMillis = 0;
+long previousMillisAlt = 0;
 
 uint8_t rbuf[N_READ];
 
+int sensitivity = 20;
+int delaytime = 50;
 const int deviation = 5;
 bool frontEndActive = true; //false for actual operation
 int current_readings[16];
 int npx_readout_channels[] = {2,3,4,5,10,11,12,13,18,19,20,21,26,27,28,29};
 int current_switch_settings[16];
+
+const int max_sum = 1000;
+
+//Base values for cocontroller command inputs
+const int cc_loop_rate_base = 125;
+const int cc_density_base = 5;
+int cc_loop_rate = 125;
+int cc_density = 5;
 
 uint8_t calc_crc(uint8_t data) {
     int index;
@@ -90,8 +111,6 @@ bool D6T_checkPEC(uint8_t buf[], int n) {
     return ret;
 }
 
-/** <!-- conv8us_s16_le {{{1 --> convert a 16bit data from the byte stream. Passing in a buffer (sensor packet) and an index.
- */
 int16_t conv8us_s16_le(uint8_t* buf, int n) {
     int ret;
     ret = buf[n];
@@ -99,15 +118,11 @@ int16_t conv8us_s16_le(uint8_t* buf, int n) {
     return (int16_t)ret;   // and convert negative.
 }
 
-/** <!-- setup {{{1 -->
- * 1. initialize a Serial port for output.
- * 2. initialize an I2C peripheral.
- */
 void setup() {
 
   pinMode(FE_pin, INPUT);
   pinMode(SENS_POT, INPUT);
-  pinMode(DECAY_POT, INPUT);
+  pinMode(RATE_POT, INPUT);
     Serial.begin(9600);  // Serial baudrate = 115200bps
     Serial1.begin(9600); // Serial bus for the 2 arduinos. D13, D14
     Wire.begin();  // i2c master
@@ -126,21 +141,35 @@ void loop() {
       frontEndActive = true;
     } else {
       frontEndActive = false;
-      //TODO black out the npx on switchoff
-      Serial.println("Front End Off");
+      pixels.clear();
+      pixels.show();
     }
 
-    int sens_state = analogRead(SENS_POT);
-    int decay_state = analogRead(DECAY_POT);
-    //TODO set adjustments, pots are working
-    Serial.print("SNS: ");
-    Serial.print(sens_state, DEC);
-    Serial.print(" :: DECAY: ");
-    Serial.println(decay_state, DEC);
-    
-  
-    int i, j;
+    int sens_state = analogRead(SENS_POT); //0-1000 for each
+    sensitivity = map(sens_state, 0, 1050, 50, 5); //this is a divisor for the delta sum which is capped at 1000.
+    int rate_state = analogRead(RATE_POT); //Adjust the speed of the whole sensing loop.
+    delaytime = map(rate_state, 0, 1050, 50, 500);
 
+    unsigned long currentMillis = millis();
+    if(currentMillis - previousMillis > delaytime) {
+      previousMillis = currentMillis; 
+      readFromSensor();
+      setOutput();
+    }
+    if(currentMillis - previousMillisAlt > alt_interval) {
+      previousMillisAlt = currentMillis; 
+      int current_rate = map(cc_loop_rate, 25, 1000, 750, 25);//inverting our local loop rate values
+      instructCoController('a', adjustrate_flag, current_rate);
+      instructCoController('b', adjustrate_flag, current_rate);
+      //instructCoController('a', adjustdensity_flag, 100); What do we want to do with this density flag? Might need to look end to end.
+      //instructCoController('b', adjustdensity_flag, 100);
+    }
+
+    delay(delaytime);
+}
+
+void readFromSensor(){
+    int i, j;
     memset(rbuf, 0, N_READ);
     // Wire buffers are enough to read D6T-16L data (33bytes) with
     // MKR-WiFi1010 and Feather ESP32,
@@ -162,52 +191,44 @@ void loop() {
     // loop temperature pixels of each thermopiles measurements
     for (i = 0, j = 2; i < N_PIXEL; i++, j += 2) {
         itemp = conv8us_s16_le(rbuf, j);
-        registerPixel(itemp, i);
+        current_readings[i] = int(itemp);
     }
     tracker.increment(current_readings);
-    //interpret();
-    setOutput();
-    delay(50);
-    //TODO instruct co-controllers
 }
 
-void registerPixel(int16_t px, int pos){
-  current_readings[pos] = int(px);
-}
-
+//Set the sensor view and calculate values for cocontroller messages
 void setOutput(){
+  int delta_sum = 0;
   for (byte i = 0; i < N_PIXEL; i++) {
       int16_t latest_reading = current_readings[i];
       int16_t this_reading = tracker.frameAverage[i];
-        int avgdiff = latest_reading - this_reading;
-        Serial.print(" ");
-        Serial.print(avgdiff, DEC);
+        int avgdiff = latest_reading - this_reading; //Difference between this thermopile and the running avg
+        delta_sum += avgdiff; //the total deviation of this frame from the running average
         if(frontEndActive){
             if(avgdiff > 150) avgdiff = 150;
             if(avgdiff < 0) avgdiff = 0;
             pixels.setPixelColor(npx_readout_channels[i], pixels.Color(150 - (avgdiff * 2), 0, avgdiff));
         }
     }
-    Serial.println(" ");
+    updateCcParams(delta_sum);
     if(frontEndActive){
       pixels.show();
     }
   }
 
-// ex. <a:r:100> to tell addr a to set rate to 100
-void instructCoController(char command, int addr, int payload){
-    Serial1.print('<');
-    Serial1.print(addr);
-    Serial1.print(':');
-    Serial1.print(command);
-    Serial1.print(payload);
-    Serial1.print('>');
+//Process a frame delta and update cocontroller loop speeds (for starters)
+void updateCcParams(int _delta){
+  //A bigger delta means more activity.
+  //Higher sensitivity means a larger increment proportional to delta.
+  //Higher increment should more greatly increase the speed of the coco loop rates.
+  int increment = _delta / sensitivity;
+  cc_loop_rate += increment;
 }
 
-void instructCoControllerStr(char command, int addr, String payload){
+// ex. <a:r:100> to tell addr a to set rate to 100
+void instructCoController(char addr, char command, int payload){
     Serial1.print('<');
     Serial1.print(addr);
-    Serial1.print(':');
     Serial1.print(command);
     Serial1.print(payload);
     Serial1.print('>');
