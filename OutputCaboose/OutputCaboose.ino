@@ -1,5 +1,5 @@
 //Installed on the last uno in the chain, it just listens and complies.
-//#include <SoftwareSerial.h>
+#include <SoftwareSerial.h>
 int interval = 125;
 int alt_interval = 500;
 long previousMillis = 0;
@@ -9,43 +9,42 @@ boolean shouldRun = false;
 String cmdcache = "";
 byte VERSION = 1;
 
-int DEVICES[] = {8, 9, 10, 11};
+int DEVICES[] = {6, 7, 8, 9, 10, 11, 12, 13};
+const int SPACING = 25;
 boolean DIR = true;
-int DEVICE_COUNT = 4;
-const byte MAX_TICKS = 25; //number of ticks in a measure of time
+const int DEVICE_COUNT = 8;
+int MAX_TICKS = 100; //number of ticks in a measure of time
 byte TICKS = 1;
-const byte STATECHANGES[] = {1,7,14,19}; //device changeover points
+int STATECHANGES[DEVICE_COUNT]; //device changeover points
 
 //At times, pump timing will be varied by small random amounts. Pauses will also be inserted.
-byte STATECHANGE_AUX_STARTS[] = {0,0,0,0};
-byte STATECHANGE_AUX_PAUSES[] = {0,0,0,0};
-byte STATECHANGE_AUX_RAND_PAUSES[] = {0,0,0,0};
+int STATECHANGE_AUX_STARTS[DEVICE_COUNT];
+int STATECHANGE_AUX_PAUSES[DEVICE_COUNT];
 
-byte stochasticity = 4;
+int stochasticity = 4;
 
 const byte numChars = 32;
 char receivedChars[numChars];
 const char adjustrate_flag = 'r';
-const char adjuststoch_flag = 'x';
+const char adjustdensity_flag = 'x';
 const char stop_flag = 's';
 const char start_flag = 'b';
 const char myname = 'b';
 
-//SoftwareSerial mySerial(2, 3); // RX, TX
+SoftwareSerial mySerial(2, 3); // RX, TX
 
 void setup()
 {
-  Serial.begin(9600);
-  Serial.println("lets get started");
- 
-  for (int i = 0; i < DEVICE_COUNT; i = i + 1) {    
+  MAX_TICKS = (DEVICE_COUNT + 1) * SPACING;
+  for (int i = 0; i < DEVICE_COUNT; i = i + 1) {  
      pinMode(DEVICES[i], OUTPUT);
      digitalWrite(DEVICES[i], HIGH);
+     STATECHANGES[i] = 1 + (i * SPACING);
    }
-
+   
   Serial.begin(9600);
+  mySerial.begin(9600);
   randomSeed(analogRead(0));
-  //mySerial.begin(9600);
 }
 
 void loop()
@@ -94,17 +93,14 @@ void Iterate(){
 }
 
 void DecorateCycle(){
-  Serial.println("Decorating...");
   for(byte i = 0; i < DEVICE_COUNT; i++){
      int base = STATECHANGES[i];
      byte _newpause = random(base, base+stochasticity);
-     byte _randpause = random(1, MAX_TICKS);
      byte _newstart = random(base-stochasticity, base);
      if(_newstart < 1) _newstart = 1;
      if(_newpause > MAX_TICKS) _newpause = MAX_TICKS;
      STATECHANGE_AUX_STARTS[i] = _newstart;
      STATECHANGE_AUX_PAUSES[i] = _newpause;
-     STATECHANGE_AUX_RAND_PAUSES[i] = _randpause;
   }
 }
 
@@ -115,8 +111,8 @@ void recvWithStartEndMarkers() {
     char endMarker = '>';
     char rc;
  
-    while (Serial.available() > 0 && newData == false) {
-        rc = Serial.read();
+    while (mySerial.available() > 0 && newData == false) {
+        rc = mySerial.read();
 
         if (recvInProgress == true) {
             if (rc != endMarker) {
@@ -142,17 +138,17 @@ void recvWithStartEndMarkers() {
 
 //Serial command ex. <ar50>
 void applySerialCommand(String serialcommand){
+      Serial.println(serialcommand);
+      mySerial.print('<' + serialcommand + '>'); //forward it
       if(serialcommand[0] != myname){
         return;
       } else {
         serialcommand.remove(0,1);
       }
       if(serialcommand[0] == adjustrate_flag){
-        //TODO adjust rate of cycling
         serialcommand.remove(0,1);
         int newrate = serialcommand.toInt();
-        if(newrate < 50) newrate = 50; //avoid burning out the relays
-        Serial.println(newrate, DEC);
+        if(newrate < 20) newrate = 50; //avoid burning out the relays
         if(newrate == 0 && shouldRun){
           Stop();
         }
@@ -160,12 +156,14 @@ void applySerialCommand(String serialcommand){
           Start();
         }
         interval = newrate;
+        alt_interval = newrate * 20;
       }
-      else if(serialcommand[0] == adjuststoch_flag){
+      else if(serialcommand[0] == adjustdensity_flag){
         serialcommand.remove(0,1);
-        int stoch = serialcommand.toInt();
-        Serial.println(stoch, DEC);
-        alt_interval = stoch;
+        int _stoch = serialcommand.toInt();
+        if(_stoch > 60) _stoch = 60;
+        if(_stoch < 2) _stoch = 2;
+        stochasticity = _stoch;
       }
       else if(serialcommand[0] == stop_flag){
         Stop();
@@ -176,7 +174,6 @@ void applySerialCommand(String serialcommand){
 }
 
 void Stop(){
-  Serial.println("Stopping");
    if(shouldRun){
     shouldRun = false;
    }
@@ -186,7 +183,6 @@ void Stop(){
 }
 
 void Start(){
-  Serial.println("Starting");
    if(!shouldRun){
     shouldRun = true;
    }
