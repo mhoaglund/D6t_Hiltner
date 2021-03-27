@@ -30,6 +30,7 @@ const char adjustrate_flag = 'r';
 const char adjustdensity_flag = 'x';
 const char stop_flag = 's';
 const char start_flag = 'b';
+const char kick_flag = 'k';
 const char myname = 'b';
 
 SoftwareSerial mySerial(2, 3); // RX, TX
