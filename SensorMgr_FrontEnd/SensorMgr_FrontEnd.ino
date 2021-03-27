@@ -60,6 +60,7 @@ int interval = 50;
 int alt_interval = 250;
 long previousMillis = 0;
 long previousMillisAlt = 0;
+long previousFeMillis = 0;
 
 uint8_t rbuf[N_READ];
 
@@ -69,13 +70,19 @@ const int deviation = 5;
 bool frontEndActive = true; //false for actual operation
 int current_readings[16];
 int npx_readout_channels[] = {2,3,4,5,10,11,12,13,18,19,20,21,26,27,28,29};
+int npx_sens_channels[] = {0,8,16,24,32,40,48}; //left column
+int npx_rate_channels[] = {7,15,23,31,39,47,55}; //right column
+int npx_summary_channels[] = {56,57,58,59,60,61,62,63}; //bottom row
 int current_switch_settings[16];
 
 const int max_sum = 1000;
 
 //Base values for cocontroller command inputs
-const int cc_loop_rate_base = 125;
+int current_delta_sum = 0;
+const int cc_loop_rate_base = 250;
+const int cc_loop_rate_min = 10;
 const int cc_density_base = 5;
+const int cc_density_max = 150;
 int cc_loop_rate = 125;
 int cc_density = 5;
 
@@ -146,26 +153,79 @@ void loop() {
     }
 
     int sens_state = analogRead(SENS_POT); //0-1000 for each
-    sensitivity = map(sens_state, 0, 1050, 50, 5); //this is a divisor for the delta sum which is capped at 1000.
+    sensitivity = map(sens_state, 0, 1050, 65, 5); //this is a divisor for the delta sum which is capped at 1000.
     int rate_state = analogRead(RATE_POT); //Adjust the speed of the whole sensing loop.
-    delaytime = map(rate_state, 0, 1050, 50, 500);
+    delaytime = map(rate_state, 0, 1050, 60, 1000);
+    alt_interval = delaytime * 8;
 
     unsigned long currentMillis = millis();
+    
     if(currentMillis - previousMillis > delaytime) {
       previousMillis = currentMillis; 
       readFromSensor();
       setOutput();
-    }
-    if(currentMillis - previousMillisAlt > alt_interval) {
-      previousMillisAlt = currentMillis; 
-      int current_rate = map(cc_loop_rate, 25, 1000, 750, 25);//inverting our local loop rate values
-      instructCoController('a', adjustrate_flag, current_rate);
-      instructCoController('b', adjustrate_flag, current_rate);
-      //instructCoController('a', adjustdensity_flag, 100); What do we want to do with this density flag? Might need to look end to end.
-      //instructCoController('b', adjustdensity_flag, 100);
+      if(current_delta_sum > 0){
+        computeLoopRate(current_delta_sum, true);
+      } else {
+        computeLoopRate(current_delta_sum, false);
+      }
     }
 
-    delay(delaytime);
+    if(currentMillis - previousFeMillis > interval) {
+      previousFeMillis = currentMillis; 
+      if(frontEndActive){
+        updateFrontEnd();
+      }
+      //Fixed front end update speed here.
+      
+    }
+    
+    if(currentMillis - previousMillisAlt > alt_interval) {
+      previousMillisAlt = currentMillis; 
+      Serial.print("S-R: ");
+      Serial.print(sensitivity, DEC);
+      Serial.print(" - ");
+      Serial.println(delaytime, DEC);
+      Serial.print("Delta Sum is: ");
+      Serial.println(current_delta_sum, DEC);
+      Serial.println("Updating CCs...");
+      Serial.print("cc loop rate is: ");
+      Serial.println(cc_loop_rate);
+      Serial.print("cc density is: ");
+      Serial.println(cc_density);
+      instructCoController('a', adjustrate_flag, cc_loop_rate);
+      instructCoController('b', adjustrate_flag, cc_loop_rate);
+      instructCoController('a', adjustdensity_flag, cc_density); //What do we want to do with this density flag? Might need to look end to end.
+      instructCoController('b', adjustdensity_flag, cc_density);
+    }
+}
+
+void computeLoopRate(int _latest, bool _dir){
+  int inc = _latest/sensitivity;
+  //if(abs(inc) < 2) inc = 2;
+  //int inc = 2;
+  if(_dir){
+    if(cc_loop_rate > cc_loop_rate_min){
+      //speed up
+      cc_loop_rate -= inc;
+    } else {
+      cc_loop_rate = cc_loop_rate_min;
+    }
+  } else {
+    if(cc_loop_rate < cc_loop_rate_base){
+      //slow down
+      if(abs(inc) < 2){
+        inc = 2;
+      } else {
+        inc = inc/2; //slower decel rate?
+      }
+      cc_loop_rate += abs(inc);
+    } else {
+      cc_loop_rate = cc_loop_rate_base;
+    }
+  }
+  cc_density = map(cc_loop_rate, cc_loop_rate_min, (cc_loop_rate_base/2), cc_density_max, cc_density_base);
+  if(cc_density < cc_density_base) cc_density = cc_density_base;
 }
 
 void readFromSensor(){
@@ -204,25 +264,56 @@ void setOutput(){
       int16_t this_reading = tracker.frameAverage[i];
         int avgdiff = latest_reading - this_reading; //Difference between this thermopile and the running avg
         delta_sum += avgdiff; //the total deviation of this frame from the running average
-        if(frontEndActive){
-            if(avgdiff > 150) avgdiff = 150;
-            if(avgdiff < 0) avgdiff = 0;
-            pixels.setPixelColor(npx_readout_channels[i], pixels.Color(150 - (avgdiff * 2), 0, avgdiff));
-        }
     }
-    updateCcParams(delta_sum);
-    if(frontEndActive){
-      pixels.show();
-    }
+    if(abs(delta_sum) < 10) delta_sum = 0;
+    if(delta_sum < -150) delta_sum = -150;
+    if(delta_sum > 150) delta_sum = 150;
+    current_delta_sum = delta_sum;
   }
+
+ void updateFrontEnd(){
+  for (byte i = 0; i < N_PIXEL; i++) {
+      int16_t latest_reading = current_readings[i];
+      int16_t this_reading = tracker.frameAverage[i];
+        int avgdiff = latest_reading - this_reading; //Difference between this thermopile and the running avg
+        if(avgdiff > 150) avgdiff = 150;
+        if(avgdiff < 0) avgdiff = 0;
+        pixels.setPixelColor(npx_readout_channels[i], pixels.Color(150 - (avgdiff * 2), 0, avgdiff));
+    }
+    byte sens_level = map(sensitivity, 2, 10, 7, 1);
+    for(byte j = 0; j < 7; j++){
+      if(j < sens_level){
+        pixels.setPixelColor(npx_sens_channels[j], pixels.Color(150,75,0));
+      } else pixels.setPixelColor(npx_sens_channels[j], pixels.Color(15,150,150));
+    }
+    byte rate_level = map(delaytime, 100, 950, 7, 1);
+    for(byte k = 0; k < 7; k++){
+      if(k < rate_level){
+        pixels.setPixelColor(npx_rate_channels[k], pixels.Color(0,255,5));
+      } else pixels.setPixelColor(npx_rate_channels[k], pixels.Color(255,0,255));
+    }
+    byte delta_level = map(current_delta_sum, -150, 150, 0, 8);
+    for(byte l = 0; l < 8; l++){
+      if(l < delta_level){
+        pixels.setPixelColor(npx_summary_channels[l], pixels.Color(125,125,125));
+      } else pixels.setPixelColor(npx_summary_channels[l], pixels.Color(0,0,255));
+    }
+    Serial.print("Levels: ");
+    Serial.print("S ");
+    Serial.print(sens_level, DEC);
+    Serial.print(" R ");
+    Serial.print(rate_level, DEC);
+    Serial.print(" D ");
+    Serial.println(delta_level, DEC);
+    pixels.show();
+ }
 
 //Process a frame delta and update cocontroller loop speeds (for starters)
 void updateCcParams(int _delta){
-  //A bigger delta means more activity.
+  //A bigger delta means more activity. Delta less than 10 is basically nothing.
   //Higher sensitivity means a larger increment proportional to delta.
   //Higher increment should more greatly increase the speed of the coco loop rates.
-  int increment = _delta / sensitivity;
-  cc_loop_rate += increment;
+
 }
 
 // ex. <a:r:100> to tell addr a to set rate to 100
