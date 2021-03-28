@@ -57,13 +57,14 @@ void loop()
   if(currentMillis - previousMillis > interval) {
     previousMillis = currentMillis; 
     if(shouldRun){
+      updateBits();
       Iterate();
     }
   }
   if(currentMillis - previousMillisAlt > alt_interval) {
     previousMillisAlt = currentMillis; 
     if(shouldRun){
-      updateBits();
+
     }
   }
 }
