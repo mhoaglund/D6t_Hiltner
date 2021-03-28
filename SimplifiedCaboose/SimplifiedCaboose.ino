@@ -1,26 +1,19 @@
 //Installed on the last uno in the chain, it just listens and complies.
 #include <SoftwareSerial.h>
-int interval = 125;
-int alt_interval = 500;
+int interval = 750;
 long previousMillis = 0;
-long previousMillisAlt = 0;
 boolean newData = false;
-boolean shouldRun = false;
+boolean shouldRun = true;
 String cmdcache = "";
 byte VERSION = 1;
 
 int DEVICES[] = {5, 6, 7, 8, 9, 10, 11, 12};
-const int SPACING = 25;
-boolean DIR = true;
 const int DEVICE_COUNT = 8;
 
 byte CHANGE_BITS[DEVICE_COUNT];
 int TEMP_BITS[DEVICE_COUNT];
 
-int density = 6;
-
-//Start-to-pause period variance (affects twice randomly)
-byte stochasticity = 3;
+int density = 55;
 
 const byte numChars = 32;
 char receivedChars[numChars];
@@ -38,8 +31,7 @@ void setup()
   for (int i = 0; i < DEVICE_COUNT; i = i + 1) {  
      pinMode(DEVICES[i], OUTPUT);
      digitalWrite(DEVICES[i], HIGH);
-   }
-   
+  }
   Serial.begin(9600);
   mySerial.begin(9600);
   randomSeed(analogRead(0));
@@ -61,12 +53,6 @@ void loop()
       Iterate();
     }
   }
-  if(currentMillis - previousMillisAlt > alt_interval) {
-    previousMillisAlt = currentMillis; 
-    if(shouldRun){
-      // updateBits();
-    }
-  }
 }
 
 void Iterate(){
@@ -82,8 +68,9 @@ void Iterate(){
 
 //Create some new change bits.
 void updateBits(){
+    int modbase = map(density, 50,100,2,45); //klugy
     for(byte i = 0; i < DEVICE_COUNT; i++){
-        TEMP_BITS[i] = random(0,density);
+        TEMP_BITS[i] = random(0+modbase,density);
     }
     for(byte i = 0; i < DEVICE_COUNT; i++){
         if(TEMP_BITS[i] > 50){
@@ -143,7 +130,7 @@ void applySerialCommand(String serialcommand){
       if(serialcommand[0] == adjustrate_flag){
         serialcommand.remove(0,1);
         int newrate = serialcommand.toInt();
-        if(newrate < 10) newrate = 10; //avoid burning out the relays
+        if(newrate < 125) newrate = 125; //avoid burning out the relays
         if(newrate == 0 && shouldRun){
           Stop();
         }
@@ -151,24 +138,19 @@ void applySerialCommand(String serialcommand){
           Start();
         }
         interval = newrate;
-        alt_interval = newrate * MAX_TICKS+1; //keep the redecorate from happening mid-loop
       }
       else if(serialcommand[0] == adjustdensity_flag){
         serialcommand.remove(0,1);
         int _stoch = serialcommand.toInt();
         if(_stoch > 150) _stoch = 150;
         if(_stoch < 2) _stoch = 2;
-        density = map(_stoch, 2,150, 60,100);
+        density = map(_stoch, 2,150, 55,100);
       }
       else if(serialcommand[0] == stop_flag){
         Stop();
       }
       else if(serialcommand[0] == start_flag){
         Start();
-      }
-      else if(serialcommand[0] == kick_flag){
-        DecorateCycle();
-        TICKS = 1;
       }
 }
 
