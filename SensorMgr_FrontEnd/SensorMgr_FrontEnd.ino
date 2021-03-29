@@ -182,17 +182,17 @@ void loop() {
     
     if(currentMillis - previousMillisAlt > alt_interval) {
       previousMillisAlt = currentMillis; 
-      Serial.print("S-R: ");
-      Serial.print(sensitivity, DEC);
-      Serial.print(" - ");
-      Serial.println(delaytime, DEC);
-      Serial.print("Delta Sum is: ");
-      Serial.println(current_delta_sum, DEC);
-      Serial.println("Updating CCs...");
-      Serial.print("cc loop rate is: ");
-      Serial.println(cc_loop_rate);
-      Serial.print("cc density is: ");
-      Serial.println(cc_density);
+//      Serial.print("S-R: ");
+//      Serial.print(sensitivity, DEC);
+//      Serial.print(" - ");
+//      Serial.println(delaytime, DEC);
+//      Serial.print("Delta Sum is: ");
+//      Serial.println(current_delta_sum, DEC);
+//      Serial.println("Updating CCs...");
+//      Serial.print("cc loop rate is: ");
+//      Serial.println(cc_loop_rate);
+//      Serial.print("cc density is: ");
+//      Serial.println(cc_density);
       instructCoController('a', adjustrate_flag, cc_loop_rate);
       instructCoController('b', adjustrate_flag, cc_loop_rate);
       instructCoController('a', adjustdensity_flag, cc_density); //What do we want to do with this density flag? Might need to look end to end.
@@ -201,10 +201,11 @@ void loop() {
 }
 
 void computeLoopRate(int _latest, bool _dir){
-  int inc = _latest/sensitivity;
+  
   //if(abs(inc) < 2) inc = 2;
   //int inc = 2;
   if(_dir){
+    int inc = _latest/sensitivity;
     if(cc_loop_rate > cc_loop_rate_min){
       //speed up
       cc_loop_rate -= inc;
@@ -212,14 +213,9 @@ void computeLoopRate(int _latest, bool _dir){
       cc_loop_rate = cc_loop_rate_min;
     }
   } else {
+    int inc = 1;
     if(cc_loop_rate < cc_loop_rate_base){
-      //slow down
-      if(abs(inc) < 2){
-        inc = 2;
-      } else {
-        inc = inc/2; //slower decel rate?
-      }
-      cc_loop_rate += abs(inc);
+      cc_loop_rate += inc;
     } else {
       cc_loop_rate = cc_loop_rate_base;
     }
@@ -280,7 +276,7 @@ void setOutput(){
         if(avgdiff < 0) avgdiff = 0;
         pixels.setPixelColor(npx_readout_channels[i], pixels.Color(150 - (avgdiff * 2), 0, avgdiff));
     }
-    byte sens_level = map(sensitivity, 2, 10, 7, 1);
+    byte sens_level = map(sensitivity, 5, 65, 7, 1);
     for(byte j = 0; j < 7; j++){
       if(j < sens_level){
         pixels.setPixelColor(npx_sens_channels[j], pixels.Color(150,75,0));
@@ -298,23 +294,15 @@ void setOutput(){
         pixels.setPixelColor(npx_summary_channels[l], pixels.Color(125,125,125));
       } else pixels.setPixelColor(npx_summary_channels[l], pixels.Color(0,0,255));
     }
-    Serial.print("Levels: ");
-    Serial.print("S ");
-    Serial.print(sens_level, DEC);
-    Serial.print(" R ");
-    Serial.print(rate_level, DEC);
-    Serial.print(" D ");
-    Serial.println(delta_level, DEC);
+//    Serial.print("Levels: ");
+//    Serial.print("S ");
+//    Serial.print(sens_level, DEC);
+//    Serial.print(" R ");
+//    Serial.print(rate_level, DEC);
+//    Serial.print(" D ");
+//    Serial.println(delta_level, DEC);
     pixels.show();
  }
-
-//Process a frame delta and update cocontroller loop speeds (for starters)
-void updateCcParams(int _delta){
-  //A bigger delta means more activity. Delta less than 10 is basically nothing.
-  //Higher sensitivity means a larger increment proportional to delta.
-  //Higher increment should more greatly increase the speed of the coco loop rates.
-
-}
 
 // ex. <a:r:100> to tell addr a to set rate to 100
 void instructCoController(char addr, char command, int payload){

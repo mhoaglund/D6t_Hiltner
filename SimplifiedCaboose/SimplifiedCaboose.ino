@@ -1,6 +1,6 @@
 //Installed on the last uno in the chain, it just listens and complies.
 #include <SoftwareSerial.h>
-int interval = 750;
+int interval = 1250;
 long previousMillis = 0;
 boolean newData = false;
 boolean shouldRun = true;
@@ -14,6 +14,9 @@ byte CHANGE_BITS[DEVICE_COUNT];
 int TEMP_BITS[DEVICE_COUNT];
 
 int density = 55;
+//rates according to MKRZERO...
+const int cc_loop_rate_base = 250;
+const int cc_loop_rate_min = 10;
 
 const byte numChars = 32;
 char receivedChars[numChars];
@@ -130,14 +133,17 @@ void applySerialCommand(String serialcommand){
       if(serialcommand[0] == adjustrate_flag){
         serialcommand.remove(0,1);
         int newrate = serialcommand.toInt();
-        if(newrate < 125) newrate = 125; //avoid burning out the relays
+        constrain(newrate, cc_loop_rate_min, cc_loop_rate_base);
+        Serial.println(newrate, DEC);
+        int processed = map(newrate, cc_loop_rate_min, cc_loop_rate_base, 125, 1250);
+        Serial.println(processed);
         if(newrate == 0 && shouldRun){
           Stop();
         }
         else if(!shouldRun && newrate > 0){
           Start();
         }
-        interval = newrate;
+        interval = processed;
       }
       else if(serialcommand[0] == adjustdensity_flag){
         serialcommand.remove(0,1);
