@@ -3,30 +3,10 @@
 #include <Favg.h>
 #include <Adafruit_NeoPixel.h>
 
-
-/*
- * MIT License
- * Copyright (c) 2019, 2018 - present OMRON Corporation
- * All rights reserved.
- *
- * Permission is hereby granted, free of charge, to any person obtaining a
- * copy of this software and associated documentation files (the "Software"),
- * to deal in the Software without restriction, including without limitation
- * the rights to use, copy, modify, merge, publish, distribute, sublicense,
- * and/or sell copies of the Software, and to permit persons to whom the
- * Software is furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice shall be included in
- * all copies or substantial portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
- * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
- * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
- * DEALINGS IN THE SOFTWARE.
- */
+// TODO: Simplified Version
+// What if we use the Sens adjustment to define a "cutoff"?
+// Use the PTAT from the D6T and add the cutoff value.
+// If a given thermopile is turning in a higher val, it's a presence.
 
 /* includes */
 #include <Wire.h>
@@ -67,7 +47,7 @@ long previousFeMillis = 0;
 
 uint8_t rbuf[N_READ];
 
-int sensitivity = 20;
+int sensitivity = 25;
 int delaytime = 50;
 const int deviation = 5;
 bool frontEndActive = true; //false for actual operation
@@ -151,7 +131,7 @@ void loop() {
     }
 
     int sens_state = analogRead(SENS_POT); //0-1000 for each
-    sensitivity = map(sens_state, 0, 1050, 65, 5); //this is a divisor for the delta sum which is capped at 1000.
+    sensitivity = map(sens_state, 0, 1050, 65, 5); //we have presence if reading = avg + sensitivty
     int rate_state = analogRead(RATE_POT); //Adjust the speed of the whole sensing loop.
     delaytime = map(rate_state, 0, 1050, 60, 1000);
     alt_interval = delaytime * 8;
@@ -162,20 +142,14 @@ void loop() {
       previousMillis = currentMillis; 
       readFromSensor();
       setOutput();
-      if(current_delta_sum > 0){
-        computeLoopRate(current_delta_sum, true);
-      } else {
-        computeLoopRate(current_delta_sum, false);
-      }
+      computeLoopRate(current_delta_sum);
     }
 
     if(currentMillis - previousFeMillis > interval) {
       previousFeMillis = currentMillis; 
       if(frontEndActive){
         updateFrontEnd();
-      }
-      //Fixed front end update speed here.
-      
+      }    
     }
     
     if(currentMillis - previousMillisAlt > alt_interval) {
@@ -198,36 +172,24 @@ void loop() {
     }
 }
 
-void computeLoopRate(int _latest, bool _dir){
-  
-  //if(abs(inc) < 2) inc = 2;
-  //int inc = 2;
-  if(_dir){
-    int inc = _latest/sensitivity;
-    if(cc_loop_rate > cc_loop_rate_min){
-      //speed up
-      cc_loop_rate -= inc;
+void computeLoopRate(int _latest){
+    int inc = 0;
+    if(_latest = 0){
+        //No activity!
+        inc = -1;
     } else {
-      cc_loop_rate = cc_loop_rate_min;
+        inc = _latest; //1-16
     }
-  } else {
-    int inc = 1;
-    if(cc_loop_rate < cc_loop_rate_base){
-      cc_loop_rate += inc;
-    } else {
-      cc_loop_rate = cc_loop_rate_base;
-    }
-  }
-  cc_density = map(cc_loop_rate, cc_loop_rate_min, (cc_loop_rate_base/2), cc_density_max, cc_density_base);
-  if(cc_density < cc_density_base) cc_density = cc_density_base;
+    cc_loop_rate += inc;
+    constrain(cc_loop_rate, cc_loop_rate_min, cc_loop_rate_base);
+    cc_density = map(cc_loop_rate, cc_loop_rate_min, (cc_loop_rate_base/2), cc_density_max, cc_density_base);
+    if(cc_density < cc_density_base) cc_density = cc_density_base;
 }
 
 void readFromSensor(){
     int i, j;
     memset(rbuf, 0, N_READ);
-    // Wire buffers are enough to read D6T-16L data (33bytes) with
-    // MKR-WiFi1010 and Feather ESP32,
-    // these have 256 and 128 buffers in their libraries.
+
     Wire.beginTransmission(D6T_ADDR);  // I2C client address
     Wire.write(D6T_CMD);               // D6T register
     Wire.endTransmission();            // I2C repeated start for read
@@ -257,11 +219,12 @@ void setOutput(){
       int16_t latest_reading = current_readings[i];
       int16_t this_reading = tracker.frameAverage[i];
         int avgdiff = latest_reading - this_reading; //Difference between this thermopile and the running avg
-        delta_sum += avgdiff; //the total deviation of this frame from the running average
+        if(avgdiff > sensitivity){
+            //Presence in this thermopile, for now.
+            delta_sum += 1;
+        }
     }
-    if(abs(delta_sum) < 10) delta_sum = 0;
-    if(delta_sum < -150) delta_sum = -150;
-    if(delta_sum > 150) delta_sum = 150;
+    //delta sum is between 1 and 16.
     current_delta_sum = delta_sum;
   }
 
@@ -286,7 +249,7 @@ void setOutput(){
         pixels.setPixelColor(npx_rate_channels[k], pixels.Color(0,255,5));
       } else pixels.setPixelColor(npx_rate_channels[k], pixels.Color(255,0,255));
     }
-    byte delta_level = map(current_delta_sum, -150, 150, 0, 8);
+    byte delta_level = map(current_delta_sum, 0, 16, 0, 8);
     for(byte l = 0; l < 8; l++){
       if(l < delta_level){
         pixels.setPixelColor(npx_summary_channels[l], pixels.Color(125,125,125));
